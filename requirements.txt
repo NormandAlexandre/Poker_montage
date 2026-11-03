@@ -1,5 +1,7 @@
 # Dépendances principales pour le pipeline de découpage IA
 faster-whisper>=1.0.0
+# av 17+ retire "metadata_errors" utilisé par faster-whisper
+av<17
 torch>=2.0.0
 tiktoken>=0.7.0
 python-dotenv>=1.0.0

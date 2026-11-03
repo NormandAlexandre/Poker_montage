@@ -1,6 +1,6 @@
 # 🎬 AI Video Auto-Cut Pipeline (Poker & Talk Video)
 
-Pipeline d'automatisation de pré-montage vidéo par IA : détection fine de la voix humaine (Silero VAD + Faster-Whisper), suppression déterministe des silences et micro-pauses sans coupure abrupte, et génération d'une **timeline non-destructive** (`.fcpxml` / `.edl`) directement importable dans **DaVinci Resolve**, **Kdenlive** ou **Premiere Pro**.
+Pipeline d'automatisation de pré-montage vidéo par IA : détection fine de la voix humaine (Silero VAD + Faster-Whisper), suppression déterministe des silences et micro-pauses sans coupure abrupte, et génération d'une **timeline non-destructive** (`.fcpxml` / `.kdenlive` / `.edl`) directement importable dans **DaVinci Resolve**, **Kdenlive** ou **Premiere Pro**.
 
 ---
 
@@ -32,7 +32,7 @@ Pipeline d'automatisation de pré-montage vidéo par IA : détection fine de la 
 ```bash
 # 1. Cloner le dépôt
 git clone <URL_DU_REPO>
-cd IA_Montage
+cd Poker_montage
 
 # 2. Créer l'environnement virtuel Python
 python -m venv .venv
@@ -71,9 +71,16 @@ python run_pipeline.py --input "chemin/vers/ma_session.mkv"
 | `--gap-split` | Seuil de silence pour scinder en deux clips (en secondes) | `0.70` |
 | `--pad` | Marge de sécurité audio avant et après chaque mot parlé | `0.15` (150 ms) |
 | `--min-run` | Durée minimale d'un segment de parole conservé | `0.40` |
-| `--export-format` | Format d'export (`fcpxml`, `edl`, ou `all`) | `all` |
+| `--merge-gap` | Fusionne deux clips séparés de moins de X secondes (après padding) | `0.10` |
+| `--model` | Modèle Whisper (`small`, `medium`, `large-v3`) | Auto (selon GPU/CPU) |
+| `--device` | Matériel de calcul (`cpu` ou `cuda`) | Auto |
+| `--export-format` | Format d'export (`fcpxml`, `kdenlive`, `edl`, ou `all`) | `all` |
 | `--force, -f` | Force le recalcul complet (écrase le cache) | Désactivé |
-| `--skip-transcribe`| Réutilise la transcription existante en cache | Désactivé |
+| `--skip-extract` | Saute l'extraction si la vidéo remuxée et le WAV existent déjà | Désactivé |
+| `--skip-transcribe`| Saute la transcription (réutilise celle en cache) | Désactivé |
+| `--semantic` | Lance la phase 4 (montage sémantique, voir plus bas) | Désactivé |
+
+> La détection automatique cherche un `.mkv` ou `.mp4` dans le dossier courant et prend le premier trouvé (hors `session_source.mp4`).
 
 ---
 
@@ -91,9 +98,38 @@ python step2_transcribe.py
 # 3. Découpage déterministe et calcul de la keep-list
 python step3_keeplist.py --gap-split 0.70 --pad 0.15
 
-# 4. Génération de la timeline FCPXML et de l'EDL
+# 4. Génération des timelines FCPXML, Kdenlive et EDL
 python step3_export.py
 ```
+
+---
+
+## 🧠 Phase 4 : Montage Sémantique (optionnel)
+
+Les étapes 1 à 3 coupent les **silences**. La phase 4 coupe selon le **sens** : une IA lit la transcription et décide quoi retirer (hésitations, phrases répétées, lecture du timer du replay, fin tronquée), découpe la vidéo en chapitres (un par spot) et marque les passages sensibles à vérifier avant YouTube.
+
+Aucune clé API n'est nécessaire : n'importe quelle IA peut écrire le fichier de décisions (Claude Code, ChatGPT, DeepSeek...).
+
+```bash
+# 1. Préparer le texte à donner à l'IA (consignes + transcription)
+python step4_semantic.py --make-prompt
+# -> cache/semantic_prompt.md
+
+# 2. Faire écrire cache/semantic_decisions.json par l'IA
+#    (ex. dans Claude Code : « fais la phase 4 à partir de cache/semantic_prompt.md »)
+
+# 3. Appliquer les décisions
+python step4_semantic.py
+```
+
+Fichiers produits (les fichiers `montage_auto.*` de l'étape 3 ne sont pas modifiés) :
+
+- `output/montage_ia.fcpxml` / `.kdenlive` / `.edl` : timeline avec les coupes IA appliquées
+- Marqueurs dans la timeline : `CHAPITRE : ...`, `COUPE IA : ...` (au point de raccord) et `À VÉRIFIER : ...`
+- `output/chapitres_youtube.txt` : chapitres prêts à coller dans la description YouTube
+- `cache/keep_list_ia.json` : la nouvelle liste de clips
+
+Pour annuler une coupe, retirez-la de `cache/semantic_decisions.json` et relancez `python step4_semantic.py`.
 
 ---
 
@@ -112,14 +148,16 @@ python step3_export.py
 
 ### Kdenlive
 1. Ouvrez Kdenlive.
-2. Allez dans **Fichier** > **Ouvrir...** ou **Projet** > **Importer une timeline** (FCPXML/EDL).
+2. Allez dans **Fichier** > **Ouvrir...** et sélectionnez directement le projet natif `output/montage_auto.kdenlive`.
+
+*(Alternative : **Fichier** > **Importer** pour charger le `.fcpxml` ou l'`.edl`.)*
 
 ---
 
 ## 🗂️ Structure du Projet
 
 ```text
-IA_Montage/
+Poker_montage/
 ├── .gitignore               # Ignore les vidéos volumineuses et le cache
 ├── .env.example             # Exemple de variables d'environnement
 ├── requirements.txt         # Dépendances Python nécessaires
@@ -128,18 +166,27 @@ IA_Montage/
 ├── step1_extract.py         # Inspection, remuxing MP4 et extraction audio 16 kHz
 ├── step2_transcribe.py      # Transcription Whisper + Silero VAD (auto CPU/GPU)
 ├── step3_keeplist.py        # Calcul déterministe des silences et padding
-├── step3_export.py          # Exporteur de timeline FCPXML v1.9 et CMX3600 EDL
+├── step3_export.py          # Exporteur FCPXML v1.9, projet Kdenlive et EDL CMX3600
+├── step4_semantic.py        # Phase 4 : applique les décisions de l'IA (coupes, chapitres, marqueurs)
 ├── cache/
 │   ├── .gitkeep
 │   ├── video_meta.json      # Métadonnées sondées (FPS, résolution, durée)
 │   ├── audio_16k.wav        # Audio extrait pour Whisper (non tracké)
 │   ├── transcript_raw.json  # Transcription brute avec timestamps mots
-│   └── keep_list.json       # Intervalles temporels des clips conservés
+│   ├── compact_payload.txt  # Transcription compacte ID|DÉBUT-FIN|TEXTE
+│   ├── keep_list.json       # Intervalles temporels des clips conservés
+│   ├── review_flags.json    # Points à vérifier (gros silences, segments douteux)
+│   ├── semantic_prompt.md   # Phase 4 : consignes + transcription pour l'IA
+│   ├── semantic_decisions.json # Phase 4 : décisions de l'IA
+│   └── keep_list_ia.json    # Phase 4 : clips après coupes sémantiques
 └── output/
     ├── .gitkeep
     ├── session_source.mp4   # Fichier vidéo remuxé (non tracké)
     ├── montage_auto.fcpxml  # Timeline FCPXML finale
-    └── montage_auto.edl     # Timeline EDL CMX3600 finale
+    ├── montage_auto.kdenlive # Projet Kdenlive natif
+    ├── montage_auto.edl     # Timeline EDL CMX3600 finale
+    ├── montage_ia.*         # Phase 4 : timelines avec coupes et marqueurs IA
+    └── chapitres_youtube.txt # Phase 4 : chapitres pour la description YouTube
 ```
 
 ---

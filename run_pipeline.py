@@ -16,6 +16,7 @@ import step1_extract
 import step2_transcribe
 import step3_keeplist
 import step3_export
+import step4_semantic
 
 
 def main():
@@ -33,6 +34,7 @@ def main():
     parser.add_argument("--skip-extract", action="store_true", help="Passer l'étape d'extraction si les fichiers existent")
     parser.add_argument("--skip-transcribe", action="store_true", help="Passer l'étape de transcription si le cache existe")
     parser.add_argument("--force", "-f", action="store_true", help="Forcer le recalcul complet de toutes les étapes")
+    parser.add_argument("--semantic", action="store_true", help="Phase 4 : applique cache/semantic_decisions.json (ou prépare le prompt pour l'IA)")
     args = parser.parse_args()
 
     # 1. Sélection du fichier vidéo source
@@ -198,9 +200,31 @@ def main():
     if args.export_format in ("edl", "all"):
         print(f"  -> Timeline EDL       : {edl_path}")
 
+    # -------------------------------------------------------------
+    # ÉTAPE 4 (OPTIONNELLE) : MONTAGE SÉMANTIQUE
+    # -------------------------------------------------------------
+    if args.semantic:
+        print("\n>>> ÉTAPE 4 : Montage sémantique")
+        decisions_path = cache_dir / "semantic_decisions.json"
+        if decisions_path.exists():
+            step4_semantic.run(
+                decisions_path=decisions_path,
+                transcript_path=transcript_raw_path,
+                keeplist_path=keeplist_path,
+                review_path=review_path,
+                meta_path=meta_path,
+                video_path=output_mp4_path.resolve(),
+                output_dir=output_dir,
+                export_format=args.export_format,
+            )
+        else:
+            step4_semantic.make_prompt(compact_payload_path, cache_dir / "semantic_prompt.md")
+            print("  Pas encore de décisions : fais remplir cache/semantic_decisions.json par une IA, puis relance avec --semantic.")
+
+    name = "montage_ia" if args.semantic and (cache_dir / "semantic_decisions.json").exists() else "montage_auto"
     print("\nProchaine action :")
-    print("1. DaVinci Resolve : Fichier -> Importer -> Timeline -> Sélectionnez montage_auto.fcpxml")
-    print("2. Kdenlive        : Ouvrez directement le fichier output/montage_auto.kdenlive")
+    print(f"1. DaVinci Resolve : Fichier -> Importer -> Timeline -> Sélectionnez {name}.fcpxml")
+    print(f"2. Kdenlive        : Ouvrez directement le fichier output/{name}.kdenlive")
 
 
 if __name__ == "__main__":

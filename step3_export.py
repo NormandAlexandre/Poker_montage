@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from fractions import Fraction
 from pathlib import Path
 from xml.dom import minidom
+from xml.sax.saxutils import escape as xml_escape
 
 
 def get_video_specs(meta_path: Path, video_path: Path = None):
@@ -75,8 +76,13 @@ def frames_to_tc(frames: int, fps: float = 30.0) -> str:
 
 
 def generate_fcpxml(keep_list, review_flags, source_path: Path, output_path: Path,
-                    width: int = 1920, height: int = 1080, fps: float = 30.0, total_source_frames: int = 115627):
-    """Génère un export FCPXML v1.9 valide et non-destructif."""
+                    width: int = 1920, height: int = 1080, fps: float = 30.0, total_source_frames: int = 115627,
+                    extra_markers=None):
+    """Génère un export FCPXML v1.9 valide et non-destructif.
+
+    extra_markers : liste optionnelle de {"clip_id", "frame", "label"} (frame = temps source),
+    utilisée par la phase 4 pour poser chapitres, coupes IA et points à vérifier.
+    """
     int_fps = int(round(fps))
     total_kept_frames = sum(clip["duration_frames"] for clip in keep_list)
     media_uri = source_path.resolve().as_uri()
@@ -87,6 +93,10 @@ def generate_fcpxml(keep_list, review_flags, source_path: Path, output_path: Pat
         clip_after = gap.get("clip_id_after")
         if clip_after is not None:
             gap_markers_by_clip.setdefault(clip_after, []).append(gap)
+
+    extra_by_clip = {}
+    for m in extra_markers or []:
+        extra_by_clip.setdefault(m["clip_id"], []).append(m)
 
     fcpxml = ET.Element("fcpxml", version="1.9")
 
@@ -163,6 +173,15 @@ def generate_fcpxml(keep_list, review_flags, source_path: Path, output_path: Pat
                     value=f"GAP {g['duration']}s coupé",
                 )
 
+        for m in extra_by_clip.get(c_id, []):
+            ET.SubElement(
+                asset_clip,
+                "marker",
+                start=f"{m['frame']}/{int_fps}s",
+                duration=f"1/{int_fps}s",
+                value=m["label"],
+            )
+
         cumulative_offset_frames += dur_f
 
     # Pretty-print
@@ -189,12 +208,18 @@ def generate_fcpxml(keep_list, review_flags, source_path: Path, output_path: Pat
 
 
 def generate_kdenlive(keep_list, source_path: Path, output_path: Path,
-                      width: int = 1920, height: int = 1080, fps: float = 30.0, total_source_frames: int = 115627):
-    """Génère un projet XML Kdenlive (.kdenlive) natif basé sur le moteur MLT."""
+                      width: int = 1920, height: int = 1080, fps: float = 30.0, total_source_frames: int = 115627,
+                      guides=None):
+    """Génère un projet XML Kdenlive (.kdenlive) natif basé sur le moteur MLT.
+
+    guides : liste optionnelle de {"pos": frame_timeline, "comment": str, "type": int}
+    affichés comme guides dans la timeline Kdenlive.
+    """
     int_fps = int(round(fps))
     source_mp4 = str(source_path.resolve()).replace("\\", "/")
     root_dir = str(output_path.parent.resolve()).replace("\\", "/")
     total_kept_frames = sum(c["duration_frames"] for c in keep_list)
+    guides_json = xml_escape(json.dumps(guides or [], ensure_ascii=False), {'"': "&quot;"})
 
     xml_lines = [
         '<?xml version="1.0" encoding="utf-8"?>',
@@ -206,6 +231,7 @@ def generate_kdenlive(keep_list, source_path: Path, output_path: Path,
         '  <property name="kdenlive:docproperties.audioChannels">2</property>',
         '  <property name="kdenlive:docproperties.audioFreq">48000</property>',
         '  <property name="kdenlive:docproperties.groups">[]</property>',
+        f'  <property name="kdenlive:docproperties.guides">{guides_json}</property>',
         f'  <profile description="{height}p {int_fps} fps" width="{width}" height="{height}" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="16" display_aspect_den="9" frame_rate_num="{int_fps}" frame_rate_den="1" colorspace="709"/>',
         f'  <producer id="producer0" in="0" out="{total_source_frames - 1}">',
         f'    <property name="length">{total_source_frames}</property>',
@@ -227,6 +253,7 @@ def generate_kdenlive(keep_list, source_path: Path, output_path: Path,
     xml_lines.extend([
         '  </playlist>',
         f'  <tractor id="tractor0" title="Montage Auto" in="0" out="{total_kept_frames - 1}">',
+        f'    <property name="kdenlive:sequenceproperties.guides">{guides_json}</property>',
         '    <track producer="playlist0"/>',
         '  </tractor>',
         '</mlt>'
