@@ -1,0 +1,41 @@
+# Python et environnements virtuels
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+.venv/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Configuration d'environnement et secrets
+.env
+.env.local
+
+# Fichiers médias volumineux (vidéos, audio bruts)
+*.mkv
+*.mp4
+*.avi
+*.mov
+*.wav
+*.mp3
+*.flac
+*.aac
+
+# Dossiers de travail générés (on ne garde que le .gitkeep)
+cache/*
+!cache/.gitkeep
+output/*
+!output/.gitkeep
+
+# Fichiers IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
